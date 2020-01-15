@@ -67,11 +67,13 @@ package index
 import (
 	"bytes"
 	"encoding/binary"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 )
 
 const (
@@ -85,15 +87,16 @@ type Index struct {
 	data      mmapData
 	pathData  uint32
 	nameData  uint32
-	postData  uint32
+	postData  uint32 // offset of file path
 	nameIndex uint32
 	postIndex uint32
-	numName   int
+	numName   int // offset of file number
 	numPost   int
 }
 
 const postEntrySize = 3 + 4 + 4
 
+// open index file
 func Open(file string) *Index {
 	mm := mmap(file)
 	if len(mm.d) < 4*4+len(trailerMagic) || string(mm.d[len(mm.d)-len(trailerMagic):]) != trailerMagic {
@@ -121,6 +124,8 @@ func (ix *Index) slice(off uint32, n int) []byte {
 	if n < 0 {
 		return ix.data.d[o:]
 	}
+	// log.Printf("n: %v\n o: %v", n, o)
+
 	return ix.data.d[o : o+n]
 }
 
@@ -330,16 +335,23 @@ func (ix *Index) postingOr(list []uint32, trigram uint32, restrict []uint32) []u
 	return x
 }
 
+// core search, using post query search index
 func (ix *Index) PostingQuery(q *Query) []uint32 {
 	return ix.postingQuery(q, nil)
 }
 
 func (ix *Index) postingQuery(q *Query, restrict []uint32) (ret []uint32) {
 	var list []uint32
+	log.Printf("Query q :%+v", q)
+	log.Printf("q.Sub :%v\n", q.Sub)
+	log.Printf("q.Trigram :%v\n", q.Trigram)
 	switch q.Op {
 	case QNone:
 		// nothing
+		log.Println("posting go none")
 	case QAll:
+		log.Println("posting go QALL")
+
 		if restrict != nil {
 			return restrict
 		}
@@ -349,6 +361,7 @@ func (ix *Index) postingQuery(q *Query, restrict []uint32) (ret []uint32) {
 		}
 		return list
 	case QAnd:
+		log.Println("posting go QAnd")
 		for _, t := range q.Trigram {
 			tri := uint32(t[0])<<16 | uint32(t[1])<<8 | uint32(t[2])
 			if list == nil {
@@ -370,7 +383,9 @@ func (ix *Index) postingQuery(q *Query, restrict []uint32) (ret []uint32) {
 			}
 		}
 	case QOr:
+		log.Println("posting go QOr")
 		for _, t := range q.Trigram {
+			log.Println("q.Trigram range")
 			tri := uint32(t[0])<<16 | uint32(t[1])<<8 | uint32(t[2])
 			if list == nil {
 				list = ix.postingList(tri, restrict)
@@ -379,6 +394,7 @@ func (ix *Index) postingQuery(q *Query, restrict []uint32) (ret []uint32) {
 			}
 		}
 		for _, sub := range q.Sub {
+			log.Println("q.Sub range")
 			list1 := ix.postingQuery(sub, restrict)
 			list = mergeOr(list, list1)
 		}
@@ -428,6 +444,7 @@ func mmap(file string) mmapData {
 
 // File returns the name of the index file to use.
 // It is either $CSEARCHINDEX or $HOME/.csearchindex.
+// Conan add change the indx directory
 func File() string {
 	f := os.Getenv("CSEARCHINDEX")
 	if f != "" {
@@ -438,5 +455,16 @@ func File() string {
 	if runtime.GOOS == "windows" && home == "" {
 		home = os.Getenv("USERPROFILE")
 	}
-	return filepath.Clean(home + "/.csearchindex")
+	return filepath.Clean(home + "/.csearchindex") // clean file path
+}
+
+// generate a index file in dir
+func IndexFromDir(dir string) string {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return "error"
+	}
+	targetIndexFile := filepath.Clean(dir + "/" + "index_" + strconv.Itoa(len(files)+1))
+
+	return targetIndexFile
 }

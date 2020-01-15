@@ -13,35 +13,25 @@ import (
 	"runtime/pprof"
 	"sort"
 
-	"github.com/google/codesearch/index"
+	"codesearch/index"
 )
 
 var usageMessage = `usage: cindex [-list] [-reset] [path...]
-
 Cindex prepares the trigram index for use by csearch.  The index is the
 file named by $CSEARCHINDEX, or else $HOME/.csearchindex.
-
 The simplest invocation is
-
 	cindex path...
-
 which adds the file or directory tree named by each path to the index.
 For example:
-
 	cindex $HOME/src /usr/include
-
 or, equivalently:
-
 	cindex $HOME/src
 	cindex /usr/include
-
 If cindex is invoked with no paths, it reindexes the paths that have
 already been added, in case the files have changed.  Thus, 'cindex' by
 itself is a useful command to run in a nightly cron job.
-
 The -list flag causes cindex to list the paths it has indexed and exit.
-
-By default cindex adds the named paths to the index but preserves 
+By default cindex adds the named paths to the index but preserves
 information about other paths that might already be indexed
 (the ones printed by cindex -list).  The -reset flag causes cindex to
 delete the existing index before indexing the new paths.
@@ -58,20 +48,14 @@ var (
 	resetFlag   = flag.Bool("reset", false, "discard existing index")
 	verboseFlag = flag.Bool("verbose", false, "print extra information")
 	cpuProfile  = flag.String("cpuprofile", "", "write cpu profile to this file")
+	indexFile   = flag.String("index", "", "specific a index file")
+	indexDir    = flag.String("indexdir", "", "specific a index dir")
 )
 
 func main() {
 	flag.Usage = usage
 	flag.Parse()
 	args := flag.Args()
-
-	if *listFlag {
-		ix := index.Open(index.File())
-		for _, arg := range ix.Paths() {
-			fmt.Printf("%s\n", arg)
-		}
-		return
-	}
 
 	if *cpuProfile != "" {
 		f, err := os.Create(*cpuProfile)
@@ -92,8 +76,8 @@ func main() {
 		for _, arg := range ix.Paths() {
 			args = append(args, arg)
 		}
+		return
 	}
-
 	// Translate paths to absolute paths so that we can
 	// generate the file list in sorted order.
 	for i, arg := range args {
@@ -111,19 +95,34 @@ func main() {
 		args = args[1:]
 	}
 
-	master := index.File()
-	if _, err := os.Stat(master); err != nil {
+	master := ""
+
+	if *indexDir != "" {
+		master = index.IndexFromDir(*indexDir)
+	}
+
+	if _, err := os.Stat(master); err != nil { // if indexFileAbs not exist, skipped
 		// Does not exist.
 		*resetFlag = true
 	}
-	file := master
+
+	if *listFlag {
+		ix := index.Open(master) // 创建索引文件
+		for _, arg := range ix.Paths() {
+			fmt.Printf("%s\n", arg)
+		}
+		return
+	}
+
+	file := master // set indexFile here
 	if !*resetFlag {
 		file += "~"
 	}
 
-	ix := index.Create(file)
+	ix := index.Create(file) //创建索引
 	ix.Verbose = *verboseFlag
 	ix.AddPaths(args)
+	var indexFileSize int64
 	for _, arg := range args {
 		log.Printf("index %s", arg)
 		filepath.Walk(arg, func(path string, info os.FileInfo, err error) error {
@@ -140,15 +139,23 @@ func main() {
 				log.Printf("%s: %s", path, err)
 				return nil
 			}
-			if info != nil && info.Mode()&os.ModeType == 0 {
+			if info != nil && info.Mode()&os.ModeType == 0 { //os.ModeType
+				indexFileSize += info.Size()
+				// 这里不能针对索引做判断了，干脆针对被建索引的文件做判断，
+				if indexFileSize >= 1*1024*1024*1024*100 { // if bigger than 100G,
+					//if indexFileSize >= 1*1024*300 { // 测试大小 > 300KB 一个
+					ix.Flush() //归位上一个文件
+					indexFileSize = 0
+					ix = index.Create(index.IndexFromDir(*indexDir)) //创建索引
+				}
 				ix.AddFile(path)
 			}
 			return nil
 		})
 	}
 	log.Printf("flush index")
-	ix.Flush()
-
+	ix.Flush() //这里写入索引
+	// master 和file是同一个东西，用一个名字即可，但是这个索引需要每次给定咯
 	if !*resetFlag {
 		log.Printf("merge %s %s", master, file)
 		index.Merge(file+"~", master, file)
