@@ -218,8 +218,10 @@ func Main() {
 					if fre.MatchString(name, true, true) < 0 {
 						continue
 					}
+					fmt.Printf("fnames is %v", fnames)
 					fnames = append(fnames, fileid)
 				}
+				fmt.Printf("fnames is %v", fnames)
 
 				if *verboseFlag {
 					log.Printf("filename regexp matched %d files\n", len(fnames))
