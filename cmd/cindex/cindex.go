@@ -142,7 +142,7 @@ func main() {
 			if info != nil && info.Mode()&os.ModeType == 0 { //os.ModeType
 				indexFileSize += info.Size()
 				// 这里不能针对索引做判断了，干脆针对被建索引的文件做判断，
-				if indexFileSize >= 1*1024*1024*1024*100 { // if bigger than 100G,
+				if indexFileSize >= 1*1024*1024*1024*3 { // if bigger than 100G,
 					//if indexFileSize >= 1*1024*300 { // 测试大小 > 300KB 一个
 					ix.Flush() //归位上一个文件
 					indexFileSize = 0
